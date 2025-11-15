@@ -19,10 +19,22 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Health check
-app.get('/health', (req, res) => {
+// Health check - Raiz
+app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
+    service: 'AppEstuda Backend',
+    version: '2.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Health check - Detalhado
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
     timestamp: new Date().toISOString(),
     version: '2.0.0'
   });
