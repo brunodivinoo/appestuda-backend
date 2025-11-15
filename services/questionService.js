@@ -2,7 +2,7 @@ const OpenAI = require('openai');
 const axios = require('axios');
 
 const BASE44_API = 'https://base44.app/api/apps/6910a14f39e954f56162a6e3';
-const SHARED_SECRET = process.env.BASE44_SHARED_SECRET;
+const SHARED_SECRET = process.env.CRON_SHARED_SECRET;
 
 const api = axios.create({
   baseURL: BASE44_API,
@@ -33,14 +33,20 @@ async function gerarQuestoesIA(params) {
 
   try {
     // 1. Buscar disciplinas completas
-    const { data: disciplinasCompletas } = await api.post('/entities/Disciplina/filter', {
-      id: { $in: disciplinas }
+    const { data: disciplinasCompletas } = await api.get('/entities/Disciplina', {
+      params: {
+        filter: JSON.stringify({ id: { $in: disciplinas } })
+      }
     });
 
     // 2. Buscar assuntos completos
     const todosIdsAssuntos = Object.values(assuntos).flat();
     const { data: todosAssuntos } = todosIdsAssuntos.length > 0
-      ? await api.post('/entities/Disciplina/filter', { id: { $in: todosIdsAssuntos } })
+      ? await api.get('/entities/Disciplina', {
+          params: {
+            filter: JSON.stringify({ id: { $in: todosIdsAssuntos } })
+          }
+        })
       : { data: [] };
 
     const assuntosCompletos = {};
