@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { generateQuestions } = require('../services/questionService');
+const { gerarQuestoesIA } = require('../services/questionService');
 
 // POST /questions/generate - Gera questões com OpenAI
 router.post('/generate', async (req, res) => {
@@ -50,7 +50,7 @@ router.post('/generate', async (req, res) => {
     };
 
     // Processar em background - não esperar
-    generateQuestions(jobData).catch(error => {
+    gerarQuestoesIA(jobData).catch(error => {
       console.error(`❌ Erro no processamento background do job ${finalJobId}:`, error);
     });
 
