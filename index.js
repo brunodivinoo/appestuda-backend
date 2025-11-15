@@ -12,9 +12,30 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// Lista de origens permitidas
+const allowedOrigins = [
+  'https://appestuda-6162a6e3.base44.app', // Produção Base44
+  'http://localhost:5173', // Desenvolvimento local
+  'http://localhost:3000', // Desenvolvimento local alternativo
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Permite requests sem origin (Postman, curl, mobile apps)
+    if (!origin) return callback(null, true);
+    
+    // Permite qualquer subdomínio .base44.app ou .modal.host (Base44 editor)
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.includes('.base44.app') ||
+      origin.includes('.modal.host')
+    ) {
+      return callback(null, true);
+    }
+    
+    console.log(`❌ CORS bloqueou origem: ${origin}`);
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 app.use(express.json());
