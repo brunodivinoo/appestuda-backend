@@ -1,75 +1,24 @@
 const express = require('express');
 const router = express.Router();
-const { gerarQuestoesIA } = require('../services/questionService');
 
-// POST /questions/generate - Gera questões com OpenAI
+// POST /questions/generate - Encaminha para função Base44
 router.post('/generate', async (req, res) => {
+  const FUNCAO_URL = 'https://base44.app/api/apps/6910a14f39e954f56162a6e3/functions/gerarQuestoes';
+  const CRON_SECRET = process.env.CRON_SHARED_SECRET;
+
   try {
-    const { jobId, estudoId, disciplinas, configuracoes } = req.body;
-
-    // Validação básica
-    if (!jobId || !estudoId || !disciplinas || !configuracoes) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios faltando',
-        required: ['jobId', 'estudoId', 'disciplinas', 'configuracoes']
-      });
-    }
-
-    if (!Array.isArray(disciplinas) || disciplinas.length === 0) {
-      return res.status(400).json({
-        error: 'disciplinas deve ser um array não vazio'
-      });
-    }
-
-    // Aceitar tanto 'quantidade' quanto 'quantidadeQuestoes' para compatibilidade
-    const quantidadeQuestoes = configuracoes.quantidadeQuestoes || configuracoes.quantidade;
-    if (!quantidadeQuestoes || quantidadeQuestoes <= 0) {
-      return res.status(400).json({
-        error: 'configuracoes.quantidade ou configuracoes.quantidadeQuestoes deve ser maior que 0'
-      });
-    }
-    
-    // Garantir que o service receba o campo correto
-    if (!configuracoes.quantidadeQuestoes && configuracoes.quantidade) {
-      configuracoes.quantidadeQuestoes = configuracoes.quantidade;
-    }
-
-    // Gerar jobId único se não fornecido
-    const finalJobId = jobId || `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    console.log(`🚀 Iniciando geração de questões para job ${finalJobId}`);
-    console.log(`📚 Matérias: ${disciplinas.join(', ')}`);
-    console.log(`🔧 Configurações:`, configuracoes);
-
-    // Iniciar processamento em background
-    const jobData = {
-      jobId: finalJobId,
-      estudoId,
-      disciplinas,
-      configuracoes
-    };
-
-    // Processar em background - não esperar
-    gerarQuestoesIA(jobData).catch(error => {
-      console.error(`❌ Erro no processamento background do job ${finalJobId}:`, error);
+    await fetch(FUNCAO_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-shared-secret': CRON_SECRET
+      },
+      body: JSON.stringify(req.body)
     });
 
-    // Retornar imediatamente
-    res.json({
-      message: 'Geração de questões iniciada em background',
-      jobId: finalJobId,
-      status: 'PROCESSING',
-      estudoId,
-      disciplinas,
-      configuracoes
-    });
-
+    res.json({ success: true, message: 'Geração iniciada' });
   } catch (error) {
-    console.error('❌ Erro ao iniciar geração de questões:', error);
-    res.status(500).json({
-      error: 'Erro ao iniciar geração de questões',
-      message: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
