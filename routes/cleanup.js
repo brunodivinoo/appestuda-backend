@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { cleanupNotifications } = require('../services/questionService');
 
 // Middleware de autenticação para rotas de cleanup
 const authenticateCleanup = (req, res, next) => {
@@ -26,27 +25,29 @@ const authenticateCleanup = (req, res, next) => {
 // Aplicar autenticação em todas as rotas
 router.use(authenticateCleanup);
 
-// POST /cleanup/notifications - Limpa notificações antigas
+// POST /cleanup/notifications - Limpa notificações antigas via Base44 Function
 router.post('/notifications', async (req, res) => {
+  const FUNCAO_URL = 'https://base44.app/api/apps/6910a14f39e954f56162a6e3/functions/limparNotificacoes';
+  const CRON_SECRET = process.env.CRON_SHARED_SECRET;
+
   try {
-    console.log('🧹 Iniciando limpeza de notificações antigas...');
-    
-    const deletedCount = await cleanupNotifications();
-    
-    console.log(`✅ Limpeza concluída: ${deletedCount} notificações removidas`);
-    
-    res.json({
-      message: 'Limpeza de notificações concluída',
-      deletedCount,
-      timestamp: new Date().toISOString()
+    const response = await fetch(FUNCAO_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-shared-secret': CRON_SECRET
+      }
     });
-    
+
+    if (!response.ok) {
+      throw new Error(`Base44 retornou ${response.status}`);
+    }
+
+    const result = await response.json();
+    res.json(result);
   } catch (error) {
-    console.error('❌ Erro na limpeza de notificações:', error);
-    res.status(500).json({
-      error: 'Erro ao limpar notificações',
-      message: error.message
-    });
+    console.error('Erro ao limpar notificações:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
