@@ -1,400 +1,271 @@
-const { OpenAI } = require('openai');
+const OpenAI = require('openai');
 const axios = require('axios');
 
-// Inicializar OpenAI apenas se a chave existir
-let openai;
-if (process.env.OPENAI_API_KEY) {
-  openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-  });
-}
+const BASE44_API = 'https://base44.app/api/apps/6910a14f39e954f56162a6e3';
+const SHARED_SECRET = process.env.BASE44_SHARED_SECRET;
 
-// Variável para armazenar notificações em memória (em produção, usar banco de dados)
-const notifications = new Map();
+const api = axios.create({
+  baseURL: BASE44_API,
+  headers: {
+    'x-shared-secret': SHARED_SECRET,
+    'Content-Type': 'application/json'
+  },
+  timeout: 120000
+});
 
-// Função para limpar notificações antigas
-async function cleanupNotifications() {
-  try {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    let deletedCount = 0;
-    for (const [id, notification] of notifications.entries()) {
-      if (new Date(notification.createdAt) < thirtyDaysAgo) {
-        notifications.delete(id);
-        deletedCount++;
-      }
-    }
-    
-    console.log(`🧹 Limpeza concluída: ${deletedCount} notificações antigas removidas`);
-    return deletedCount;
-  } catch (error) {
-    console.error('Erro na limpeza de notificações:', error);
-    throw error;
-  }
-}
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
-// Função para atualizar notificação no frontend
-async function updateNotification(jobId, data) {
-  try {
-    const frontendUrl = process.env.FRONTEND_URL;
-    if (!frontendUrl) {
-      console.log('⚠️  FRONTEND_URL não configurada, notificação não enviada');
-      return;
-    }
+async function gerarQuestoesIA(params) {
+  const {
+    jobId,
+    estudoId,
+    disciplinas,
+    assuntos,
+    configuracoes,
+    userEmail
+  } = params;
 
-    const notification = {
-      id: jobId,
-      ...data,
-      updatedAt: new Date().toISOString()
-    };
-    
-    // Armazenar em memória
-    notifications.set(jobId, notification);
-    
-    // Enviar para o frontend (se possível)
-    try {
-      await axios.post(`${frontendUrl}/api/notifications`, notification, {
-        headers: {
-          'x-shared-secret': process.env.BASE44_SHARED_SECRET
-        },
-        timeout: 5000
-      });
-      console.log(`📤 Notificação ${jobId} enviada para o frontend`);
-    } catch (error) {
-      console.log(`📋 Notificação ${jobId} armazenada localmente (frontend offline)`);
-    }
-    
-    return notification;
-  } catch (error) {
-    console.error('Erro ao atualizar notificação:', error);
-  }
-}
+  const quantidade = configuracoes.quantidade || configuracoes.quantidadeQuestoes || 10;
 
-// Função principal para gerar questões
-async function generateQuestions(jobData) {
-  const { jobId, estudoId, disciplinas, configuracoes } = jobData;
-  
-  console.log(`🎯 Iniciando geração de questões para job ${jobId}`);
-  console.log(`📚 Matérias: ${disciplinas.join(', ')}`);
-  console.log(`⚙️  Configurações:`, configuracoes);
+  console.log(`[${jobId}] 🎯 Iniciando geração de ${quantidade} questões`);
 
   try {
-    // Atualizar status para iniciado
-    await updateNotification(jobId, {
-      type: 'QUESTION_GENERATION',
-      status: 'IN_PROGRESS',
-      progress: 0,
-      message: 'Iniciando geração de questões...',
-      estudoId,
-      createdAt: new Date().toISOString()
-    });
-
-    const allQuestions = [];
-    const totalQuestoes = configuracoes.quantidadeQuestoes;
-    const questoesPorMateria = Math.floor(totalQuestoes / disciplinas.length);
-    const questoesExtras = totalQuestoes % disciplinas.length;
-
-    // Processar cada matéria
-    for (let i = 0; i < disciplinas.length; i++) {
-      const materia = disciplinas[i];
-      const questoesMateria = questoesPorMateria + (i < questoesExtras ? 1 : 0);
-      
-      console.log(`📖 Processando ${materia}: ${questoesMateria} questões`);
-      
-      // Atualizar progresso
-      const progresso = Math.round(((i + 1) / disciplinas.length) * 100);
-      await updateNotification(jobId, {
-        status: 'IN_PROGRESS',
-        progress: progresso,
-        message: `Processando ${materia}... (${i + 1}/${disciplinas.length})`,
-        currentMateria: materia
-      });
-
-      // Gerar questões para esta matéria em lotes
-      const materiaQuestions = await generateQuestionsForMateria(
-        materia, 
-        questoesMateria, 
-        configuracoes
-      );
-      
-      allQuestions.push(...materiaQuestions);
+    // 1. Buscar disciplinas completas
+    const disciplinasCompletas = [];
+    for (const discId of disciplinas) {
+      const { data } = await api.get(`/entities/Disciplina/${discId}`);
+      disciplinasCompletas.push(data);
     }
 
-    // Salvar questões no banco através do proxy
-    console.log(`💾 Salvando ${allQuestions.length} questões no banco...`);
-    
-    await updateNotification(jobId, {
-      status: 'SAVING',
-      progress: 95,
-      message: 'Salvando questões no banco de dados...'
-    });
-
-    // Enviar questões para o frontend salvar
-    try {
-      const response = await axios.post(
-        `${process.env.FRONTEND_URL}/api/questions/bulk`,
-        {
-          estudoId,
-          questoes: allQuestions
-        },
-        {
-          headers: {
-            'x-shared-secret': process.env.BASE44_SHARED_SECRET,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
+    // 2. Buscar assuntos completos
+    const assuntosCompletos = {};
+    for (const [key, ids] of Object.entries(assuntos)) {
+      if (ids && ids.length > 0) {
+        assuntosCompletos[key] = [];
+        for (const assuntoId of ids) {
+          const { data } = await api.get(`/entities/Disciplina/${assuntoId}`);
+          assuntosCompletos[key].push(data);
         }
-      );
-
-      console.log(`✅ Questões salvas com sucesso:`, response.data);
-      
-      // Notificar sucesso
-      await updateNotification(jobId, {
-        status: 'COMPLETED',
-        progress: 100,
-        message: `Geração concluída! ${allQuestions.length} questões criadas.`,
-        questoesGeradas: allQuestions.length,
-        completedAt: new Date().toISOString()
-      });
-
-    } catch (error) {
-      console.error('❌ Erro ao salvar questões:', error.response?.data || error.message);
-      throw new Error(`Erro ao salvar questões: ${error.response?.data?.error || error.message}`);
+      }
     }
 
-  } catch (error) {
-    console.error(`❌ Erro na geração de questões para job ${jobId}:`, error);
-    
-    // Notificar erro
-    await updateNotification(jobId, {
-      status: 'FAILED',
-      progress: 0,
-      message: `Erro: ${error.message}`,
-      error: error.message,
-      failedAt: new Date().toISOString()
-    });
-    
-    throw error;
-  }
-}
+    // 3. Montar contexto
+    const contexto = disciplinasCompletas.map(d => {
+      const assuntosTexto = (assuntosCompletos[d.id] || [])
+        .map(a => `  - ${a.titulo}`)
+        .join("\n");
+      
+      return `Disciplina: ${d.titulo}${assuntosTexto ? '\n' + assuntosTexto : ''}`;
+    }).join("\n\n");
 
-// Função para gerar questões para uma matéria específica
-async function generateQuestionsForMateria(materia, quantidade, configuracoes) {
-  const questions = [];
-  const questoesPorLote = 10; // Processar de 10 em 10 para não sobrecarregar a API
-  
-  for (let i = 0; i < quantidade; i += questoesPorLote) {
-    const questoesLote = Math.min(questoesPorLote, quantidade - i);
-    
-    const prompt = createPrompt(materia, questoesLote, configuracoes);
-    
-    try {
-      console.log(`🤖 Gerando lote de ${questoesLote} questões para ${materia}...`);
+    console.log(`[${jobId}] 📚 Contexto:\n${contexto}`);
+
+    // 4. Formato de alternativas
+    const formatoAlternativas = configuracoes.modalidade === "certo_errado"
+      ? `[{"letra": "C", "texto": "Certo", "correta": true}, {"letra": "E", "texto": "Errado", "correta": false}]`
+      : `[{"letra": "A", "texto": "...", "correta": false}, {"letra": "B", "texto": "...", "correta": true}, {"letra": "C", "texto": "...", "correta": false}, {"letra": "D", "texto": "...", "correta": false}, {"letra": "E", "texto": "...", "correta": false}]`;
+
+    // 5. Prompt base
+    const promptBase = `Você é um gerador especializado de questões de concurso público${configuracoes.banca ? ` no estilo ${configuracoes.banca}` : ''}.
+
+CONTEXTO DO ESTUDO:
+${contexto}
+
+INSTRUÇÕES:
+- Gere questões ${configuracoes.modalidade === "certo_errado" ? "de CERTO ou ERRADO" : "de MÚLTIPLA ESCOLHA"}
+${configuracoes.banca ? `- Banca: ${configuracoes.banca}` : '- Banca: Aleatória (CESPE, FGV, VUNESP, FCC, etc)'}
+${configuracoes.ano ? `- Ano: ${configuracoes.ano}` : '- Ano: Aleatório (2020-2024)'}
+- Nível de escolaridade: ${configuracoes.nivel}
+- Dificuldade: ${configuracoes.dificuldade}
+${configuracoes.modalidade === "multipla_escolha" ? '- Cada questão deve ter EXATAMENTE 5 alternativas (A, B, C, D, E)' : '- Cada questão deve ter EXATAMENTE 2 alternativas (Certo ou Errado)'}
+- Apenas UMA alternativa correta por questão
+- Inclua explicação DETALHADA da resposta correta
+- As questões devem ser realistas e seguir o padrão de concursos públicos
+- Distribua as questões entre as disciplinas e assuntos fornecidos
+
+FORMATO JSON (RETORNE APENAS JSON VÁLIDO, SEM MARKDOWN):
+[
+  {
+    "enunciado": "Texto completo da questão aqui...",
+    "alternativas": ${formatoAlternativas},
+    "gabarito": "${configuracoes.modalidade === "certo_errado" ? 'C ou E' : 'letra da alternativa correta'}",
+    "explicacao": "Explicação detalhada e didática da resposta correta...",
+    "disciplina_titulo": "Nome exato da disciplina",
+    "assunto_titulo": "Nome exato do assunto (se aplicável)"
+  }
+]`;
+
+    // 6. Gerar em lotes de 10
+    const totalLotes = Math.ceil(quantidade / 10);
+    let questoesCriadas = 0;
+
+    for (let lote = 0; lote < totalLotes; lote++) {
+      const quantidadeLote = Math.min(10, quantidade - questoesCriadas);
       
-      // Verificar se OpenAI está configurado
-      if (!openai) {
-        console.log(`⚠️  OpenAI não configurado. Criando questões de exemplo para ${materia}`);
-        const loteQuestions = createSampleQuestions(materia, questoesLote);
-        console.log(`✅ Lote de exemplo criado: ${loteQuestions.length} questões`);
-        questions.push(...loteQuestions);
-        continue;
-      }
-      
+      console.log(`[${jobId}] 📝 Gerando lote ${lote + 1}/${totalLotes} (${quantidadeLote} questões)`);
+
+      const promptLote = `${promptBase}\n\nGere exatamente ${quantidadeLote} questões.`;
+
+      // Chamar OpenAI GPT-4
       const response = await openai.chat.completions.create({
         model: "gpt-4",
-        messages: [
-          {
-            role: "system",
-            content: "Você é um professor experiente especializado em criar questões educacionais de alta qualidade."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
+        messages: [{
+          role: "user",
+          content: promptLote
+        }],
         temperature: 0.7,
         max_tokens: 4000
       });
 
-      const generatedText = response.choices[0].message.content;
-      const loteQuestions = parseQuestions(generatedText, materia);
+      const conteudo = response.choices[0].message.content;
       
-      console.log(`✅ Lote gerado: ${loteQuestions.length} questões`);
-      questions.push(...loteQuestions);
-      
-      // Pequena pausa entre requisições para não sobrecarregar a API
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-    } catch (error) {
-      console.error(`Erro ao gerar questões para ${materia}:`, error);
-      // Em caso de erro, criar questões de exemplo
-      console.log(`⚠️  Criando questões de exemplo devido ao erro`);
-      const loteQuestions = createSampleQuestions(materia, questoesLote);
-      questions.push(...loteQuestions);
-    }
-  }
-  
-  return questions;
-}
+      // Limpar markdown
+      const jsonLimpo = conteudo
+        .replace(/```json\n?/g, "")
+        .replace(/```\n?/g, "")
+        .trim();
 
-// Função para criar o prompt para o GPT-4
-function createPrompt(materia, quantidade, configuracoes) {
-  const { nivelDificuldade, tiposQuestoes } = configuracoes;
-  
-  const dificuldadeText = {
-    'facil': 'fáceis',
-    'medio': 'médias',
-    'dificil': 'difíceis',
-    'misto': 'variadas (fáceis, médias e difíceis)'
-  }[nivelDificuldade] || 'médias';
-
-  let prompt = `Crie exatamente ${quantidade} questões de múltipla escolha SOBRE: ${materia}
-
-REGRAS IMPORTANTES:
-1. Cada questão DEVE ter: enunciado, 4 alternativas (A, B, C, D), e resposta correta
-2. As questões devem ser ${dificuldadeText}
-3. O conteúdo deve ser educacional e apropriado para estudos
-4. Use linguagem clara e objetiva
-5. Evite repetir questões ou conteúdos idênticos
-
-FORMATO OBRIGATÓRIO (uma questão por bloco):
----
-QUESTÃO X
-Enunciado da questão aqui?
-A) Alternativa A
-B) Alternativa B
-C) Alternativa C
-D) Alternativa D
-RESPOSTA: X
----
-
-Substitua X pelo número da questão e pela letra correta (A, B, C ou D).
-
-Gere exatamente ${quantidade} questões seguindo este formato.`;
-
-  if (tiposQuestoes && tiposQuestoes.length > 0) {
-    prompt += `\n\nTIPOS DE QUESTÕES PERMITIDOS: ${tiposQuestoes.join(', ')}`;
-  }
-
-  return prompt;
-}
-
-// Função para parsear as questões geradas
-function parseQuestions(text, materia) {
-  const questions = [];
-  const blocks = text.split('---').filter(block => block.trim());
-  
-  blocks.forEach((block, index) => {
-    try {
-      const lines = block.split('\n').filter(line => line.trim());
-      
-      // Encontrar o número da questão
-      const numeroMatch = lines[0].match(/QUESTÃO (\d+)/i);
-      const numero = numeroMatch ? parseInt(numeroMatch[1]) : index + 1;
-      
-      // Encontrar o enunciado (linhas até a primeira alternativa)
-      let enunciado = '';
-      let alternativaStart = -1;
-      
-      for (let i = 1; i < lines.length; i++) {
-        if (lines[i].match(/^[A-D]\)/)) {
-          alternativaStart = i;
-          break;
-        }
-        enunciado += lines[i] + ' ';
+      let questoesLote;
+      try {
+        questoesLote = JSON.parse(jsonLimpo);
+      } catch (parseError) {
+        console.error(`[${jobId}] ❌ Erro ao parsear JSON:`, jsonLimpo.substring(0, 200));
+        throw new Error("Resposta da IA não está em formato JSON válido");
       }
-      
-      enunciado = enunciado.trim();
-      
-      // Extrair alternativas
-      const alternativas = {};
-      let respostaCorreta = '';
-      
-      for (let i = alternativaStart; i < lines.length; i++) {
-        const alternativaMatch = lines[i].match(/^([A-D])\) (.+)$/);
-        if (alternativaMatch) {
-          alternativas[alternativaMatch[1]] = alternativaMatch[2].trim();
-        }
-        
-        // Encontrar resposta correta
-        const respostaMatch = lines[i].match(/RESPOSTA:\s*([A-D])/i);
-        if (respostaMatch) {
-          respostaCorreta = respostaMatch[1];
+
+      // Salvar questões no Base44
+      for (const q of questoesLote) {
+        try {
+          // Encontrar disciplina
+          const disciplina = disciplinasCompletas.find(
+            d => d.titulo.toLowerCase() === q.disciplina_titulo.toLowerCase()
+          );
+          
+          // Encontrar assunto (se houver)
+          let assuntoId = null;
+          if (q.assunto_titulo) {
+            const todosAssuntos = Object.values(assuntosCompletos).flat();
+            const assunto = todosAssuntos.find(
+              a => a.titulo.toLowerCase() === q.assunto_titulo.toLowerCase()
+            );
+            assuntoId = assunto?.id || null;
+          }
+
+          // Criar questão via Base44 API
+          await api.post('/entities/Questao', {
+            enunciado: q.enunciado,
+            alternativas: q.alternativas,
+            gabarito: q.gabarito,
+            explicacao: q.explicacao,
+            estudo_id: estudoId,
+            disciplina_id: disciplina?.id,
+            assunto_id: assuntoId,
+            banca: configuracoes.banca || "Aleatória",
+            ano: configuracoes.ano ? parseInt(configuracoes.ano) : null,
+            nivel: configuracoes.nivel,
+            nivel_dificuldade: configuracoes.dificuldade,
+            modalidade: configuracoes.modalidade,
+            fonte: "ia_automatica",
+            privada: true,
+            ativo: true,
+            vezes_resolvida: 0,
+            vezes_acertada: 0,
+            taxa_acerto: 0,
+            created_by: userEmail,
+          });
+
+          questoesCriadas++;
+
+          // Atualizar progresso na notificação
+          const progresso = Math.round((questoesCriadas / quantidade) * 100);
+          
+          await api.patch(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
+            total_gerado: questoesCriadas,
+            progresso: progresso,
+          });
+
+          console.log(`[${jobId}] ✅ Progresso: ${questoesCriadas}/${quantidade} (${progresso}%)`);
+
+        } catch (saveError) {
+          console.error(`[${jobId}] ❌ Erro ao salvar questão:`, saveError.message);
         }
       }
-      
-      if (enunciado && Object.keys(alternativas).length === 4 && respostaCorreta) {
-        questions.push({
-          enunciado,
-          alternativas,
-          respostaCorreta,
-          materia,
-          dificuldade: 'medio', // Padrão, pode ser ajustado
-          tipo: 'multipla_escolha',
-          createdAt: new Date().toISOString()
-        });
+
+      // Delay entre lotes
+      if (lote < totalLotes - 1) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
-      
-    } catch (error) {
-      console.error('Erro ao parsear bloco:', block, error);
     }
-  });
-  
-  return questions;
-}
 
-// Função para criar questões de exemplo quando OpenAI não está disponível
-function createSampleQuestions(materia, quantidade) {
-  const sampleQuestions = [];
-  const templates = [
-    {
-      enunciado: `Qual é o principal conceito estudado em ${materia}?`,
-      alternativas: {
-        'A': 'Conceito fundamental da área',
-        'B': 'Um conceito secundário',
-        'C': 'Uma aplicação prática',
-        'D': 'Um exemplo específico'
-      },
-      respostaCorreta: 'A'
-    },
-    {
-      enunciado: `Sobre ${materia}, qual afirmação está correta?`,
-      alternativas: {
-        'A': 'É uma área importante do conhecimento',
-        'B': 'Não tem relevância prática',
-        'C': 'É apenas teórica',
-        'D': 'Não possui aplicações'
-      },
-      respostaCorreta: 'A'
-    },
-    {
-      enunciado: `O que caracteriza o estudo de ${materia}?`,
-      alternativas: {
-        'A': 'Sua abordagem metodológica específica',
-        'B': 'Falta de metodologia',
-        'C': 'Apenas aspectos teóricos',
-        'D': 'Nenhuma das alternativas'
-      },
-      respostaCorreta: 'A'
-    }
-  ];
-
-  for (let i = 0; i < quantidade; i++) {
-    const template = templates[i % templates.length];
-    sampleQuestions.push({
-      ...template,
-      materia,
-      dificuldade: 'medio',
-      tipo: 'multipla_escolha',
-      createdAt: new Date().toISOString()
+    // 7. Finalizar
+    await api.patch(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
+      status: "concluida",
+      total_gerado: questoesCriadas,
+      progresso: 100,
     });
-  }
 
-  return sampleQuestions;
+    console.log(`[${jobId}] 🎉 Geração concluída! Total: ${questoesCriadas} questões`);
+
+    return {
+      success: true,
+      total: questoesCriadas
+    };
+
+  } catch (error) {
+    console.error(`[${jobId}] ❌ Erro na geração:`, error.message);
+    
+    // Atualizar notificação com erro
+    try {
+      await api.patch(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
+        status: "erro",
+        erro_mensagem: error.message,
+      });
+    } catch (updateError) {
+      console.error(`[${jobId}] ❌ Erro ao atualizar notificação:`, updateError);
+    }
+
+    throw error;
+  }
+}
+
+async function limparNotificacoesAntigas() {
+  console.log('🧹 Limpando notificações antigas...');
+
+  try {
+    const trintaDiasAtras = new Date();
+    trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
+
+    const { data: notificacoes } = await api.get('/entities/NotificacaoGeracaoQuestao', {
+      params: {
+        filter: JSON.stringify({
+          created_date: { $lt: trintaDiasAtras.toISOString() }
+        })
+      }
+    });
+
+    let deletadas = 0;
+    for (const notif of notificacoes) {
+      try {
+        await api.delete(`/entities/NotificacaoGeracaoQuestao/${notif.id}`);
+        deletadas++;
+      } catch (deleteError) {
+        console.error(`❌ Erro ao deletar notificação ${notif.id}:`, deleteError.message);
+      }
+    }
+
+    console.log(`✅ ${deletadas} notificações antigas deletadas`);
+
+    return { deletadas };
+
+  } catch (error) {
+    console.error('❌ Erro ao limpar notificações:', error.message);
+    throw error;
+  }
 }
 
 module.exports = {
-  generateQuestions,
-  cleanupNotifications
+  gerarQuestoesIA,
+  limparNotificacoesAntigas
 };
