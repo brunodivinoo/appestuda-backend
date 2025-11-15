@@ -186,7 +186,7 @@ FORMATO JSON (RETORNE APENAS JSON VÁLIDO, SEM MARKDOWN):
           // Atualizar progresso na notificação
           const progresso = Math.round((questoesCriadas / quantidade) * 100);
           
-          await api.patch(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
+          await api.put(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
             total_gerado: questoesCriadas,
             progresso: progresso,
           });
