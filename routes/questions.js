@@ -21,10 +21,17 @@ router.post('/generate', async (req, res) => {
       });
     }
 
-    if (!configuracoes.quantidadeQuestoes || configuracoes.quantidadeQuestoes <= 0) {
+    // Aceitar tanto 'quantidade' quanto 'quantidadeQuestoes' para compatibilidade
+    const quantidadeQuestoes = configuracoes.quantidadeQuestoes || configuracoes.quantidade;
+    if (!quantidadeQuestoes || quantidadeQuestoes <= 0) {
       return res.status(400).json({
-        error: 'configuracoes.quantidadeQuestoes deve ser maior que 0'
+        error: 'configuracoes.quantidade ou configuracoes.quantidadeQuestoes deve ser maior que 0'
       });
+    }
+    
+    // Garantir que o service receba o campo correto
+    if (!configuracoes.quantidadeQuestoes && configuracoes.quantidade) {
+      configuracoes.quantidadeQuestoes = configuracoes.quantidade;
     }
 
     // Gerar jobId único se não fornecido
