@@ -1,63 +1,91 @@
 const express = require('express');
 const router = express.Router();
-const questionService = require('../services/questionService');
+const { generateQuestions } = require('../services/questionService');
 
-// Adicionar à fila de geração
+// POST /questions/generate - Gera questões com OpenAI
 router.post('/generate', async (req, res) => {
   try {
-    const { usuario_id, disciplina_id, quantidade, dificuldade } = req.body;
-    
-    // Validações
-    if (!usuario_id || !disciplina_id || !quantidade) {
+    const { jobId, estudoId, disciplinas, configuracoes } = req.body;
+
+    // Validação básica
+    if (!jobId || !estudoId || !disciplinas || !configuracoes) {
       return res.status(400).json({
-        error: 'Campos obrigatórios: usuario_id, disciplina_id, quantidade'
+        error: 'Campos obrigatórios faltando',
+        required: ['jobId', 'estudoId', 'disciplinas', 'configuracoes']
       });
     }
-    
-    if (quantidade < 1 || quantidade > 100) {
+
+    if (!Array.isArray(disciplinas) || disciplinas.length === 0) {
       return res.status(400).json({
-        error: 'Quantidade deve ser entre 1 e 100'
+        error: 'disciplinas deve ser um array não vazio'
       });
     }
-    
-    const result = await questionService.addToQueue({
-      usuario_id,
-      disciplina_id,
-      quantidade,
-      dificuldade: dificuldade || 'media'
+
+    if (!configuracoes.quantidadeQuestoes || configuracoes.quantidadeQuestoes <= 0) {
+      return res.status(400).json({
+        error: 'configuracoes.quantidadeQuestoes deve ser maior que 0'
+      });
+    }
+
+    // Gerar jobId único se não fornecido
+    const finalJobId = jobId || `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    console.log(`🚀 Iniciando geração de questões para job ${finalJobId}`);
+    console.log(`📚 Matérias: ${disciplinas.join(', ')}`);
+    console.log(`🔧 Configurações:`, configuracoes);
+
+    // Iniciar processamento em background
+    const jobData = {
+      jobId: finalJobId,
+      estudoId,
+      disciplinas,
+      configuracoes
+    };
+
+    // Processar em background - não esperar
+    generateQuestions(jobData).catch(error => {
+      console.error(`❌ Erro no processamento background do job ${finalJobId}:`, error);
     });
-    
+
+    // Retornar imediatamente
     res.json({
-      success: true,
-      ...result,
-      message: 'Geração de questões iniciada!',
-      timestamp: new Date().toISOString()
+      message: 'Geração de questões iniciada em background',
+      jobId: finalJobId,
+      status: 'PROCESSING',
+      estudoId,
+      disciplinas,
+      configuracoes
     });
+
   } catch (error) {
-    console.error('❌ Erro ao adicionar à fila:', error.message);
+    console.error('❌ Erro ao iniciar geração de questões:', error);
     res.status(500).json({
-      error: error.message,
-      timestamp: new Date().toISOString()
+      error: 'Erro ao iniciar geração de questões',
+      message: error.message
     });
   }
 });
 
-// Verificar status da geração
-router.get('/status/:job_id', async (req, res) => {
+// GET /questions/status/:jobId - Verifica status de uma geração
+router.get('/status/:jobId', (req, res) => {
   try {
-    const { job_id } = req.params;
-    const status = await questionService.getJobStatus(job_id);
+    const { jobId } = req.params;
     
+    // Em produção, isso viria do banco de dados
+    // Por enquanto, retornamos um status genérico
     res.json({
-      success: true,
-      ...status,
+      jobId,
+      status: 'PROCESSING',
+      progress: 0,
+      message: 'Processando...',
       timestamp: new Date().toISOString()
     });
+    
   } catch (error) {
-    console.error('❌ Erro ao verificar status:', error.message);
+    console.error('❌ Erro ao verificar status:', error);
     res.status(500).json({
-      error: error.message,
-      timestamp: new Date().toISOString()
+      error: 'Erro ao verificar status',
+      message: error.message
     });
   }
 });
