@@ -33,21 +33,20 @@ async function gerarQuestoesIA(params) {
 
   try {
     // 1. Buscar disciplinas completas
-    const disciplinasCompletas = [];
-    for (const discId of disciplinas) {
-      const { data } = await api.get(`/entities/Disciplina/${discId}`);
-      disciplinasCompletas.push(data);
-    }
+    const { data: disciplinasCompletas } = await api.post('/entities/Disciplina/filter', {
+      id: { $in: disciplinas }
+    });
 
     // 2. Buscar assuntos completos
+    const todosIdsAssuntos = Object.values(assuntos).flat();
+    const { data: todosAssuntos } = todosIdsAssuntos.length > 0
+      ? await api.post('/entities/Disciplina/filter', { id: { $in: todosIdsAssuntos } })
+      : { data: [] };
+
     const assuntosCompletos = {};
     for (const [key, ids] of Object.entries(assuntos)) {
       if (ids && ids.length > 0) {
-        assuntosCompletos[key] = [];
-        for (const assuntoId of ids) {
-          const { data } = await api.get(`/entities/Disciplina/${assuntoId}`);
-          assuntosCompletos[key].push(data);
-        }
+        assuntosCompletos[key] = todosAssuntos.filter(a => ids.includes(a.id));
       }
     }
 
@@ -200,7 +199,7 @@ FORMATO JSON (RETORNE APENAS JSON VÁLIDO, SEM MARKDOWN):
     }
 
     // 7. Finalizar
-    await api.patch(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
+    await api.put(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
       status: "concluida",
       total_gerado: questoesCriadas,
       progresso: 100,
@@ -218,7 +217,7 @@ FORMATO JSON (RETORNE APENAS JSON VÁLIDO, SEM MARKDOWN):
     
     // Atualizar notificação com erro
     try {
-      await api.patch(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
+      await api.put(`/entities/NotificacaoGeracaoQuestao/${jobId}`, {
         status: "erro",
         erro_mensagem: error.message,
       });
